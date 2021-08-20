@@ -8,6 +8,8 @@ library(imputeTS)
 library(lubridate, warn.conflicts = FALSE)
 library(hydroGOF)
 library(MLmetrics)
+library(mltools)
+
 
 # H2O gbm forecasting
 
@@ -38,14 +40,16 @@ data <- data %>% mutate(
   month = lubridate::month(to),
   hour = lubridate::hour(to),
   minute = lubridate::minute(to),
-  weekday = as.POSIXlt(to)$wday
+  weekday = factor(as.character(as.POSIXlt(to)$wday))
 )
+
+data <- one_hot(data)
 
 dates <- data[57059:57130, ]$to
 data[, to:=NULL]
 train_data <- as.h2o(data[1:57058, ])
 test_data <- as.h2o(data[57059:57130, ])
-
+data
 
 # Set the predictors and response; set the factors:
 predictors <- c(
@@ -53,7 +57,10 @@ predictors <- c(
   "stay_home", "stay_home_flag", "borders", "T", 
   "P0", "U", "Ff", "Td", "is_light",
   "year", "day", "month", "hour", "minute",
-  "height", "clouds_right", "weekday")
+  "height", "clouds_right", 
+  "weekday_1","weekday_2","weekday_3","weekday_4",
+  "weekday_5","weekday_6","weekday_0")
+
 response <- "MW"
 
 
