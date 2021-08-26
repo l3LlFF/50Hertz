@@ -15,6 +15,8 @@ library(mltools)
 
 h2o.init()
 
+
+
 metrics <- function(y_valid, y_pred) {
   return (data.table(
     MSE=mse(y_pred, y_valid),
@@ -27,39 +29,74 @@ metrics <- function(y_valid, y_pred) {
 }
 
 data <- fread('stacking_data_2/data_Hamburg.csv')
-data[, `:=`(V1 = NULL, P =NULL, DD =NULL, WW = NULL, c = NULL)]
-#data[, `:=`("school" = NULL, "workplace" =NULL, "stay_home" =NULL, 
-#            "borders" = NULL, "school_flag" = NULL, workplace_flag = NULL,
-#            "stay_home_flag" = NULL, VV = NULL)]
+data[, `:=`(V1 = NULL, P =NULL, DD =NULL, WW = NULL, c = NULL, 
+            clouds_left = NULL, clouds_right = NULL)]
 
 data <- data[minute(data$to) == 0]
 
 data <- data %>% mutate(
-  year = lubridate::year(to),
-  day = lubridate::day(to),
-  month = lubridate::month(to),
-  hour = lubridate::hour(to),
-  minute = lubridate::minute(to),
-  weekday = factor(as.character(as.POSIXlt(to)$wday))
+  #day = factor(lubridate::day(to)),
+  month = factor(lubridate::month(to)),
+  hour = factor(lubridate::hour(to)),
+  weekday = factor(as.character(as.POSIXlt(to)$wday)),
+  yday = yday(to)
 )
 
-data <- one_hot(data)
+#n_shift <- 24 * 7
+#data <- setDT(data)[, paste0('T', 1:n_shift) := shift(data$T, 1:n_shift)][]
+#data <- data[n_shift:nrow(data)]
 
-dates <- data[57059:57130, ]$to
+data <- data %>% mutate(
+  T_1_day = lag(T, 24),
+  T_1_week = lag(T, 24 * 1 * 7),
+  T_2_weeks = lag(T, 24 * 2 * 7),
+  T_3_week = lag(T, 24 * 3 * 7),
+  T_4_weeks = lag(T, 24 * 4 * 7),
+  T_1_hours = lag(T, 1),
+  T_2_hours = lag(T, 2),
+  T_3_hours = lag(T, 3),
+  T_4_hours = lag(T, 4),
+  T_5_hours = lag(T, 5),
+  T_6_hours = lag(T, 6),
+  T_7_hours = lag(T, 7),
+  T_8_hours = lag(T, 8),
+  
+  Ff_1_day = lag(Ff, 24),
+  Ff_1_hour = lag(Ff, 1),
+  Ff_2_hours = lag(Ff, 2),
+  Ff_3_hours = lag(Ff, 3),
+  Ff_4_hours = lag(Ff, 4),
+  Ff_5_hours = lag(Ff, 5),
+  
+  U_1_day = lag(U, 24),
+  U_1_hour = lag(U, 1),
+  U_2_hours = lag(U, 2),
+  U_3_hours = lag(U, 3),
+  U_4_hours = lag(U, 4),
+  U_5_hours = lag(U, 5),
+  
+  P0_1_day = lag(P0, 24),
+  P0_1_hour = lag(P0, 1),
+  P0_2_hours = lag(P0, 2),
+  P0_3_hours = lag(P0, 3),
+  P0_4_hours = lag(P0, 4),
+  P0_5_hours = lag(P0, 5)
+)
+n_shift = 24 * 4 * 7
+data <- data[n_shift:nrow(data)]
+
+dates <- data[(nrow(data) - 24*3 + 1):nrow(data), ]$to
+
 data[, to:=NULL]
-train_data <- as.h2o(data[1:57058, ])
-test_data <- as.h2o(data[57059:57130, ])
-data
+nrow(data)
+train_border <- nrow(data) - 24 * 30
+train_data <- as.h2o(data[1:(train_border), ])
+val_data <- as.h2o(data[(train_border + 1):(nrow(data) - 24*3), ])
+test_data <- as.h2o(data[(nrow(data) - 24*3 + 1):nrow(data), ])
 
 # Set the predictors and response; set the factors:
-predictors <- c(
-  "school", "school_flag", "workplace", "workplace_flag",
-  "stay_home", "stay_home_flag", "borders", "T", 
-  "P0", "U", "Ff", "Td", "is_light",
-  "year", "day", "month", "hour", "minute",
-  "height", "clouds_right", 
-  "weekday_1","weekday_2","weekday_3","weekday_4",
-  "weekday_5","weekday_6","weekday_0")
+predictors <- c(names(data[, -12]))
+
 
 response <- "MW"
 
@@ -97,6 +134,8 @@ gbm_gridperf <- h2o.getGrid(grid_id = "gbm_grid",
 best_model <- h2o.getModel(gbm_gridperf@model_ids[[1]])
 best_model@model[["model_summary"]]
 
+
+
 best <- h2o.performance(model = best_model,
                         newdata = test_data)
 # Eval performance:
@@ -114,7 +153,7 @@ df <- data.frame(
 ggplot(data=df, aes(x=dt)) + 
   geom_line(aes(y=MW), color = "darkred") +
   geom_line(aes(y=predict), color="steelblue", linetype="twodash") +
-  theme_minimal() 
+  theme_minimal()
 
 metrics(df$MW, df$predict)
 
@@ -123,18 +162,19 @@ metrics(df$MW, df$predict)
 # Build and train the model:
 pros_gbm <- h2o.gbm(    
         training_frame = train_data,
-        validation_frame = test_data,
+        validation_frame = val_data,
         y = response,
         x = predictors,
         seed = 1915,
-        nfolds = 8,
+        nfolds = 7,
         keep_cross_validation_predictions = TRUE,
-        ntrees = 1500,
+        ntrees = 1800,
         learn_rate = 0.01,
-        max_depth = 8,
-        sample_rate = 0.8,
-        col_sample_rate = 0.8,
-        min_rows = 5)
+        max_depth = 7,
+        sample_rate = 0.9,
+        col_sample_rate = 0.9,
+        min_rows = 15,
+        categorical_encoding = 'OneHotExplicit')
 
 # Eval performance:
 perf <- h2o.performance(pros_gbm)
@@ -154,3 +194,8 @@ ggplot(data=df, aes(x=dt)) +
   theme_minimal() 
 
 metrics(df$MW, df$predict)
+
+h2o.varimp_plot(pros_gbm, 40)
+tail(h2o.varimp(pros_gbm), 10)
+
+
